@@ -7,6 +7,7 @@ import numpy as np
 import starsim as ss 
 import pylab as pl
 import sciris as sc
+import pandas as pd
 
 
 class Schistosomiasis(ss.Infection):
@@ -20,8 +21,13 @@ class Schistosomiasis(ss.Infection):
             # Natural history parameters, all specified in days
             # Initial conditions and beta
             init_prev = 0.18,
-            beta = None,
-
+            beta = 0,
+            #re_inf = 0.0416, # re-infection rate 
+            #efficacy = 0.86, # drug efficacy
+            #lambda_estimate = (50 + 300) / 2
+            #infection_intensity = 
+            #population_size = 1000000
+            
             # Environmental parameters
             beta_env = 0.5 / 3,  # Scaling factor for transmission from environment,
             half_sat_rate = 1000000,   # Infectious dose in water sufficient to produce infection in 50% of  exposed, from Mukandavire et al. (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3102413/)
@@ -33,6 +39,9 @@ class Schistosomiasis(ss.Infection):
         par_dists = ss.omergeleft(par_dists,
             init_prev      = ss.bernoulli,
             p_env_transmit = ss.bernoulli,
+#            population = ss.normal,
+#            infection_intensity = 
+
         )
 
         super().__init__(pars=pars, par_dists=par_dists, *args, **kwargs)
@@ -91,7 +100,7 @@ class Schistosomiasis(ss.Infection):
         res = self.results
 
         # Make new cases via direct transmission
-        super().make_new_cases(sim)
+       # super().make_new_cases(sim)
 
         # Make new cases via indirect transmission
         p_transmit = res.env_conc[sim.ti] * pars.beta_env
@@ -127,7 +136,7 @@ class Treatment(ss.Intervention):
     def apply(self, sim, *args, **kwargs):
         if sim.yearvec[sim.ti] in self.years:
             schisto = sim.diseases.schistosomiasis
-            eligible_ids = sim.people.age > 5
+            eligible_ids = (sim.people.age > 5) & ~sim.demographics.pregnancy.pregnant
             n_eligible = len(eligible_ids)
             is_treated = np.random.rand(n_eligible) < self.prob
             treat_ids = eligible_ids[is_treated]
@@ -141,40 +150,77 @@ def run_schisto(n_agents = 5000, treatment_years = None):
 
     pars = dict(
         start = 2019,
-        n_years = 10,
-        n_agents = n_agents,
-        networks = 'random',
+        n_years = 21,
+        total_pop = 47e6
     )
 
     # Make the disease
     schisto = Schistosomiasis()
 
+    # Make a module to capture pregnancy
+    fertility_rates = pd.read_csv('kenya_asfr.csv')
+    pregnancy = ss.Pregnancy(pars=dict(fertility_rate=fertility_rates))  #
+
+    # Make a module to capture deaths
+    death_rates = pd.read_csv('kenya_deaths.csv')
+    deaths = ss.Deaths(pars=dict(death_rate=death_rates))  #
+
+    # Make a population of people with the right age structure
+    age_data = pd.read_csv('kenya_age.csv')
+    people = ss.People(n_agents=n_agents, age_data=age_data)
+
     # Make the treatment intervention
     MDA = Treatment(prob=1, years = treatment_years)
-    sim = ss.Sim(pars, diseases=schisto, interventions=MDA)
+    sim = ss.Sim(pars, people=people, diseases=schisto, demographics=[pregnancy, deaths], interventions=MDA)
     sim.run()
     return sim
 
 
 if __name__ == '__main__':
 
-    treatment_years = [2019, 2020, 2021]
+    treatment_years = np.arange(2019,2031)
     sim = run_schisto(treatment_years=treatment_years)
 
     # Pull out results
     results = sim.results.schistosomiasis
 
     pl.figure()
-    pl.subplot(2,1,1)
-    pl.title('Number infected')
+
+    pl.subplot(2,2,1)
+    pl.title('Number infected per million')
+    pl.xlabel('Year')
+    pl.ylabel('infected individuals')
     pl.plot(sim.yearvec, results.n_infected)
     for ty in treatment_years:
         pl.axvline(ty, ls='--', c='k')
-    pl.subplot(2,1,2)
+
+    pl.subplot(2,2,2)
     pl.title('Prevalence')
+    pl.xlabel('Year')
+    pl.ylabel('prevalence')
     pl.plot(sim.yearvec, results.prevalence)
     for ty in treatment_years:
         pl.axvline(ty, ls='--', c='k')
+
+    pl.subplot(2,2,3)
+    pl.title('Number pregnant in millions')
+    pl.xlabel('Year')
+    pl.ylabel('pregnant individuals')
+    pl.plot(sim.yearvec, sim.results.pregnancy.pregnancies)
+    for ty in treatment_years:
+        pl.axvline(ty, ls='--', c='k')
+
+    pl.subplot(2,2,4)
+    pl.title('Population pyramid')
+    pl.xlabel('Age')
+    pl.ylabel('population')
+    bins = np.arange(0,101,1)
+    scale = 47e6/5000
+    counts, bins = np.histogram(sim.people.age, bins)
+    pl.bar(bins[:-1], counts * scale, label='Simulated histogram')
+
+
     sc.figlayout()
     pl.show()
+
 
