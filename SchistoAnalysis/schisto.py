@@ -128,13 +128,14 @@ class Schistosomiasis(ss.Infection):
 
 class Treatment(ss.Intervention):
 
-    def __init__(self, prob=0.5, years=None):
+    def __init__(self, prob=0.5, treatment_years=None):
         super().__init__()
         self.prob = prob
-        self.years = years
+        self.years = treatment_years
+
 
     def apply(self, sim, *args, **kwargs):
-        if sim.yearvec[sim.ti] in self.years:
+        if sim.yearvec[sim.ti] in self.years: 
             schisto = sim.diseases.schistosomiasis
             eligible_ids = (sim.people.age > 5) & ~sim.demographics.pregnancy.pregnant
             n_eligible = len(eligible_ids)
@@ -146,12 +147,13 @@ class Treatment(ss.Intervention):
 
 
 # Function to run sim
-def run_schisto(n_agents = 5000, treatment_years = None):
+def make_schisto(n_agents = 5000, seed=0, coverage=None, treatment_years=None):
 
     pars = dict(
         start = 2019,
         n_years = 21,
-        total_pop = 47e6
+        total_pop = 47e6,
+        rand_seed=seed,
     )
 
     # Make the disease
@@ -170,18 +172,47 @@ def run_schisto(n_agents = 5000, treatment_years = None):
     people = ss.People(n_agents=n_agents, age_data=age_data)
 
     # Make the treatment intervention
-    MDA = Treatment(prob=1, years = treatment_years)
+    MDA = Treatment(prob=coverage, treatment_years=treatment_years)
     sim = ss.Sim(pars, people=people, diseases=schisto, demographics=[pregnancy, deaths], interventions=MDA)
+    return sim
+
+
+def run_schisto(n_agents = 5000, seed=0, coverage=0.75, treatment_years=None):
+    sim = make_schisto(n_agents = n_agents, seed=seed, coverage=coverage, treatment_years=treatment_years)
     sim.run()
     return sim
 
 
-if __name__ == '__main__':
+def run_multiple(coverage_array=None, treatment_years=None):
 
-    treatment_years = np.arange(2019,2031)
-    sim = run_schisto(treatment_years=treatment_years)
+    # Run multiple plots. 
+    n_seeds = 2
+#    n_timesteps = 
 
-    # Pull out results
+    # Initialize storage for results
+    results = {}
+
+    # Run simulations for each vaccine coverage scenario
+    for coverage in coverage_array:
+        treatment_sim_results = []
+        for seed in range(n_seeds):
+            treatment_sim = make_schisto(seed=seed, coverage=coverage, treatment_years=treatment_years)
+            treatment_sim.run()
+            treatment_sim_results.append(treatment_sim.results.schistosomiasis.n_infected)
+        results[coverage] = treatment_sim_results
+
+    # Calculate percentiles for plotting
+    percentiles = [2.5, 50, 97.5]
+    percentile_results = {}
+    for treatment, sim_results in results.items():
+        percentile_results[treatment] = np.percentile(sim_results, percentiles, axis=0)
+        percentile_results['time'] = treatment_sim.yearvec
+
+    return percentile_results
+
+
+def plot_single(sim):
+        # Pull out results
     results = sim.results.schistosomiasis
 
     pl.figure()
@@ -202,25 +233,59 @@ if __name__ == '__main__':
     for ty in treatment_years:
         pl.axvline(ty, ls='--', c='k')
 
-    pl.subplot(2,2,3)
-    pl.title('Number pregnant in millions')
-    pl.xlabel('Year')
-    pl.ylabel('pregnant individuals')
-    pl.plot(sim.yearvec, sim.results.pregnancy.pregnancies)
-    for ty in treatment_years:
-        pl.axvline(ty, ls='--', c='k')
+    #pl.subplot(2,2,3)
+    #pl.title('Number pregnant in millions')
+    #pl.xlabel('Year')
+    #pl.ylabel('pregnant individuals')
+    #pl.plot(sim.yearvec, sim.results.pregnancy.pregnancies)
+    #for ty in treatment_years:
+    #    pl.axvline(ty, ls='--', c='k')
 
-    pl.subplot(2,2,4)
-    pl.title('Population pyramid')
-    pl.xlabel('Age')
-    pl.ylabel('population')
-    bins = np.arange(0,101,1)
-    scale = 47e6/5000
-    counts, bins = np.histogram(sim.people.age, bins)
-    pl.bar(bins[:-1], counts * scale, label='Simulated histogram')
-
+    #pl.subplot(2,2,4)
+    #pl.title('Population pyramid')
+    #pl.xlabel('Age')
+    #pl.ylabel('population')
+    #bins = np.arange(0,101,1)
+    # scale = 47e6/5000
+    # counts, bins = np.histogram(sim.people.age, bins)
+    # pl.bar(bins[:-1], counts * scale, label='Simulated histogram')
 
     sc.figlayout()
     pl.show()
+
+def plot_multiple(treatment_years=None, coverage_array=None, percentile_results=None, labels = None):
+    pl.figure()
+    colors = sc.vectocolor(coverage_array)
+    labels = []
+
+    for i, coverage in enumerate(coverage_array):
+        pl.plot(percentile_results['time'], percentile_results[coverage][1], color=colors[i])
+        pl.fill_between(percentile_results['time'], percentile_results[coverage][0], percentile_results[coverage][2], color=colors[i], alpha=0.5)
+    for ty in treatment_years:
+        pl.axvline(ty, ls='--', c='k')
+
+    pl.show()
+    return
+
+
+if __name__ == '__main__':
+
+    # General settings
+    treatment_years = np.arange(2019,2031)
+
+    # What to run
+    run_single = False
+    if run_single:
+        sim = run_schisto(coverage=1, treatment_years=treatment_years)
+        plot_single(sim)
+
+    do_run_multiple = True
+    if do_run_multiple:
+        coverage_array = [0.75, 0.8, 0.85, 0.9, 1]  # Different treatment coverage scenarios
+
+        percentile_results = run_multiple(coverage_array=coverage_array, treatment_years=treatment_years)
+        plot_multiple(treatment_years=treatment_years, coverage_array=coverage_array, percentile_results=percentile_results)
+
+
 
 
